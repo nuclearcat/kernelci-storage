@@ -10,7 +10,7 @@ impl AzureDriver {
     }
 }
 
-use crate::{get_config_content, ReceivedFile};
+use crate::{get_config_content, ReceivedFile, is_verbose_enabled};
 use axum::http::{HeaderName, HeaderValue};
 use azure_storage::StorageCredentials;
 use azure_storage_blobs::container::operations::BlobItem;
@@ -24,6 +24,14 @@ use std::fs::read_to_string;
 use std::fs::File;
 use std::io::Read;
 use std::env;
+
+macro_rules! verbose_log {
+    ($($arg:tt)*) => {
+        if is_verbose_enabled() {
+            println!($($arg)*);
+        }
+    };
+}
 
 macro_rules! debug_log {
     ($($arg:tt)*) => {
@@ -66,7 +74,7 @@ fn get_azure_credentials(name: &str) -> AzureConfig {
 fn calculate_checksum(filename: &String, data: &[u8]) {
     let hash = sha2_512::default().update(data).finalize();
     let digest = hash.digest();
-    println!("File: {} Checksum: {}", filename, digest.to_hex_lowercase());
+    verbose_log!("File: {} Checksum: {}", filename, digest.to_hex_lowercase());
 }
 
 /// Write file to Azure blob storage
@@ -115,7 +123,7 @@ async fn write_file_to_blob(filename: String, data: Vec<u8>, cont_type: String) 
                 match blob_client.put_block(block_id, buffer).await {
                     Ok(_) => {
                         total_bytes_uploaded += bytes_read;
-                        println!("Uploaded {} bytes", total_bytes_uploaded);
+                        verbose_log!("Uploaded {} bytes", total_bytes_uploaded);
                     }
                     Err(e) => {
                         eprintln!("Error uploading block: {:?}", e);
@@ -135,11 +143,11 @@ async fn write_file_to_blob(filename: String, data: Vec<u8>, cont_type: String) 
         .await
     {
         Ok(_) => {
-            println!("Block list uploaded");
+            verbose_log!("Block list uploaded");
             let blob_url_res = blob_client.url();
             match blob_url_res {
                 Ok(blob_url) => {
-                    println!("Blob URL: {}", blob_url);
+                    verbose_log!("Blob URL: {}", blob_url);
                 }
                 Err(e) => {
                     eprintln!("Error getting blob URL: {:?}", e);

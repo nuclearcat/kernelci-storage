@@ -1,10 +1,18 @@
-use crate::get_config_content;
+use crate::{get_config_content, is_verbose_enabled};
 use hmac::{Hmac, Mac};
 use jwt::{Header, SignWithKey, Token, VerifyWithKey};
 use sha2::Sha256;
 use std::collections::BTreeMap;
 use toml::value::Table;
 use std::env;
+
+macro_rules! verbose_log {
+    ($($arg:tt)*) => {
+        if is_verbose_enabled() {
+            println!($($arg)*);
+        }
+    };
+}
 
 macro_rules! debug_log {
     ($($arg:tt)*) => {

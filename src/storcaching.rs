@@ -2,6 +2,15 @@ use std::fs;
 use std::time::SystemTime;
 use tokio::time::Duration;
 use std::env;
+use crate::is_verbose_enabled;
+
+macro_rules! verbose_log {
+    ($($arg:tt)*) => {
+        if is_verbose_enabled() {
+            println!($($arg)*);
+        }
+    };
+}
 
 macro_rules! debug_log {
     ($($arg:tt)*) => {

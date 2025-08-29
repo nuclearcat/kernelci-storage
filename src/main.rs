@@ -28,6 +28,21 @@ use headers::HeaderMap;
 use std::path;
 use std::{env, net::SocketAddr, path::PathBuf};
 use tokio::io::AsyncSeekExt;
+use std::sync::OnceLock;
+
+static VERBOSE_LOGGING: OnceLock<bool> = OnceLock::new();
+
+fn is_verbose_enabled() -> bool {
+    *VERBOSE_LOGGING.get().unwrap_or(&false) || env::var("STORAGE_DEBUG").is_ok()
+}
+
+macro_rules! verbose_log {
+    ($($arg:tt)*) => {
+        if is_verbose_enabled() {
+            println!($($arg)*);
+        }
+    };
+}
 
 macro_rules! debug_log {
     ($($arg:tt)*) => {
@@ -70,6 +85,9 @@ struct Args {
 
     #[clap(long, default_value = "", help = "Generate JWT token for email")]
     generate_jwt_token: String,
+
+    #[clap(short, long, help = "Enable verbose logging")]
+    verbose: bool,
 }
 
 // const names for last-modified and etag in lowercase
@@ -242,6 +260,10 @@ async fn ax_metrics() -> (StatusCode, String) {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
+    
+    let args = Args::parse();
+    VERBOSE_LOGGING.set(args.verbose).unwrap();
+    
     let tlscfg = initial_setup().await;
     let port = 3000;
     let state = AppState {
@@ -307,7 +329,7 @@ async fn ax_check_auth(headers: HeaderMap) -> (StatusCode, String) {
     match message {
         Ok(email) => {
             let message = format!("Authorized: {}", email);
-            println!("Authorized: {}", email);
+            verbose_log!("Authorized: {}", email);
             (StatusCode::OK, message)
         }
         Err(_) => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
@@ -353,7 +375,7 @@ fn verify_upload_permissions(owner: &str, path: &str) -> Result<(), String> {
     let users = match users_r {
         Some(users) => users,
         None => {
-            println!("No users section in config.toml, ignoring upload path restriction");
+            verbose_log!("No users section in config.toml, ignoring upload path restriction");
             return Ok(());
         }
     };
@@ -391,7 +413,7 @@ async fn ax_post_file(headers: HeaderMap, State(state): State<AppState>, mut mul
         Ok(owner) => owner,
         Err(_) => return (StatusCode::UNAUTHORIZED, Vec::new()),
     };
-    println!("Authorized");
+    verbose_log!("Authorized");
 
     /* 100-continue Expect is broken, quite hard to fix in axum */
     /*
@@ -403,7 +425,7 @@ async fn ax_post_file(headers: HeaderMap, State(state): State<AppState>, mut mul
     }
     */
 
-    println!("Uploading file");
+    verbose_log!("Uploading file");
     let mut path: String = "".to_string();
     let mut file0: Vec<u8> = Vec::new();
     let mut file0_filename: String = "".to_string();
@@ -425,7 +447,7 @@ async fn ax_post_file(headers: HeaderMap, State(state): State<AppState>, mut mul
 
         match data {
             Ok(data) => {
-                println!("Field {}: {} bytes", name, data.len());
+                verbose_log!("Field {}: {} bytes", name, data.len());
                 if name == "path" {
                     path = String::from_utf8(data.to_vec()).unwrap();
                 } else if name == "file0" {
@@ -435,7 +457,7 @@ async fn ax_post_file(headers: HeaderMap, State(state): State<AppState>, mut mul
                         None => todo!(),
                     }
                 } else {
-                    println!("Unknown field {}: {} bytes", name, data.len());
+                    verbose_log!("Unknown field {}: {} bytes", name, data.len());
                 }
             }
             Err(e) => {
@@ -447,15 +469,15 @@ async fn ax_post_file(headers: HeaderMap, State(state): State<AppState>, mut mul
             }
         }
     }
-    println!("Upload: {} bytes, {}/{}", file0.len(), path, file0_filename);
     // if path ends on /, remove it
     if path.ends_with("/") {
         // TBD: Fix it!
-        println!("Removing trailing /, workaround");
+        verbose_log!("Removing trailing /, workaround");
         path.pop();
     }
     
     let full_path = format!("{}/{}", path, file0_filename);
+    println!("UPLOAD {} {} bytes", full_path, file0.len());
     let hdr_content_type = headers.get("Content-Type-Upstream");
     let semaphore = get_or_create_semaphore(&state.file_locks, &full_path).await;
     
@@ -543,7 +565,8 @@ async fn ax_get_file(
     // IMPORTANT! Headers in cache must be stored in lowercase
     let received_file = driver_get_file(filepath.clone());
     if !received_file.valid {
-        println!(
+        println!("DOWNLOAD {} 404", filepath);
+        verbose_log!(
             "{:?} 404 0 {} {} {} {}",
             remote_addr, human_time, method, filepath, user_agent_str
         );
@@ -590,7 +613,8 @@ async fn ax_get_file(
         }
         if let Some(etag) = upstream_headers.get(ETAG) {
             if if_none_match == etag {
-                println!(
+                println!("DOWNLOAD {} 304", filepath);
+                verbose_log!(
                     "{:?} 304 0 {} {} {} {}",
                     remote_addr, human_time, method, filepath, user_agent_str
                 );
@@ -602,7 +626,8 @@ async fn ax_get_file(
         if let Some(last_modified) = upstream_headers.get(LAST_MODIFIED) {
             // TODO: Validate properly last_modified
             if if_modified_since == last_modified {
-                println!(
+                println!("DOWNLOAD {} 304", filepath);
+                verbose_log!(
                     "{:?} 304 0 {} {} {} {}",
                     remote_addr, human_time, method, filepath, user_agent_str
                 );
@@ -613,8 +638,8 @@ async fn ax_get_file(
 
     /* Usually HEAD is used to check if the file exists and range is supported */
     if method == axum::http::Method::HEAD {
-        //println!("HEAD request, returning headers only");
-        println!(
+        println!("DOWNLOAD {} 200", filepath);
+        verbose_log!(
             "{:?} 200 0 {} {} {} {}",
             remote_addr, human_time, method, filepath, user_agent_str
         );
@@ -664,13 +689,15 @@ async fn ax_get_file(
             //println!("Headers: {:?}", headers);
             if start != 0 {
                 let body_size = end - start;
-                println!(
+                println!("DOWNLOAD {} 206 {} bytes", filepath, body_size);
+                verbose_log!(
                     "{:?} 206 {} {} {} {} {}",
                     remote_addr, body_size, human_time, method, filepath, user_agent_str
                 );
                 return (StatusCode::PARTIAL_CONTENT, headers, axbody).into_response();
             }
-            println!(
+            println!("DOWNLOAD {} 200 {} bytes", filepath, metadata.len());
+            verbose_log!(
                 "{:?} 200 {} {} {} {} {}",
                 remote_addr,
                 metadata.len(),
@@ -683,7 +710,8 @@ async fn ax_get_file(
         }
         Err(_) => {
             eprintln!("Error opening file in ax_get_file");
-            println!(
+            println!("DOWNLOAD {} 404", filepath);
+            verbose_log!(
                 "{:?} 404 0 {} {} {} {}",
                 remote_addr, human_time, method, filepath, user_agent_str
             );
