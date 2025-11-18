@@ -107,6 +107,7 @@ struct ReceivedFile {
     cached_filename: String,
     headers: HeaderMap,
     valid: bool,
+    hash_id: Option<String>,
 }
 
 // Wrapper to convert Multipart Field into AsyncRead
@@ -723,6 +724,7 @@ async fn ax_get_file(
 ) -> impl IntoResponse {
     let timestamp = std::time::SystemTime::now();
     let human_time = chrono::DateTime::<chrono::Utc>::from(timestamp);
+    let client_ip = client_ip_from_headers(&rxheaders, remote_addr);
     let user_agent = rxheaders.get("User-Agent");
     let user_agent_str = match user_agent {
         Some(user_agent) => user_agent.to_str().unwrap(),
@@ -745,10 +747,12 @@ async fn ax_get_file(
 
     // IMPORTANT! Headers in cache must be stored in lowercase
     let received_file = driver_get_file(filepath.clone());
+    let hash_id = received_file.hash_id.clone();
+    let hashid_display = hash_id.as_deref().unwrap_or("-");
     if !received_file.valid {
         println!(
-            "{:?} 404 0 {} {} {} {}",
-            remote_addr, human_time, method, filepath, user_agent_str
+            "{} 404 0 {} {} {} {} hashid={}",
+            client_ip, human_time, method, filepath, user_agent_str, hashid_display
         );
         return (StatusCode::NOT_FOUND, format!("Not Found: {}", filepath)).into_response();
     }
@@ -794,8 +798,8 @@ async fn ax_get_file(
         if let Some(etag) = upstream_headers.get(ETAG) {
             if if_none_match == etag {
                 println!(
-                    "{:?} 304 0 {} {} {} {}",
-                    remote_addr, human_time, method, filepath, user_agent_str
+                    "{} 304 0 {} {} {} {} hashid={}",
+                    client_ip, human_time, method, filepath, user_agent_str, hashid_display
                 );
                 return (StatusCode::NOT_MODIFIED, headers, Body::empty()).into_response();
             }
@@ -806,8 +810,8 @@ async fn ax_get_file(
             // TODO: Validate properly last_modified
             if if_modified_since == last_modified {
                 println!(
-                    "{:?} 304 0 {} {} {} {}",
-                    remote_addr, human_time, method, filepath, user_agent_str
+                    "{} 304 0 {} {} {} {} hashid={}",
+                    client_ip, human_time, method, filepath, user_agent_str, hashid_display
                 );
                 return (StatusCode::NOT_MODIFIED, headers, Body::empty()).into_response();
             }
@@ -818,8 +822,8 @@ async fn ax_get_file(
     if method == axum::http::Method::HEAD {
         //println!("HEAD request, returning headers only");
         println!(
-            "{:?} 200 0 {} {} {} {}",
-            remote_addr, human_time, method, filepath, user_agent_str
+            "{} 200 0 {} {} {} {} hashid={}",
+            client_ip, human_time, method, filepath, user_agent_str, hashid_display
         );
         return (headers, Body::empty()).into_response();
     }
@@ -868,27 +872,28 @@ async fn ax_get_file(
             if start != 0 {
                 let body_size = end - start;
                 println!(
-                    "{:?} 206 {} {} {} {} {}",
-                    remote_addr, body_size, human_time, method, filepath, user_agent_str
+                    "{} 206 {} {} {} {} {} hashid={}",
+                    client_ip, body_size, human_time, method, filepath, user_agent_str, hashid_display
                 );
                 return (StatusCode::PARTIAL_CONTENT, headers, axbody).into_response();
             }
             println!(
-                "{:?} 200 {} {} {} {} {}",
-                remote_addr,
+                "{} 200 {} {} {} {} {} hashid={}",
+                client_ip,
                 metadata.len(),
                 human_time,
                 method,
                 filepath,
-                user_agent_str
+                user_agent_str,
+                hashid_display
             );
             return (StatusCode::OK, headers, axbody).into_response();
         }
         Err(_) => {
             eprintln!("Error opening file in ax_get_file");
             println!(
-                "{:?} 404 0 {} {} {} {}",
-                remote_addr, human_time, method, filepath, user_agent_str
+                "{} 404 0 {} {} {} {} hashid={}",
+                client_ip, human_time, method, filepath, user_agent_str, hashid_display
             );
             (StatusCode::NOT_FOUND, headers, Body::empty()).into_response()
         }

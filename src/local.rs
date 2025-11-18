@@ -80,10 +80,13 @@ fn get_metadata_file_path(filename: &str) -> PathBuf {
         let _ = fs::create_dir_all(&metadata_path);
     }
 
-    // Generate hash-based filename for metadata
+    let hash = metadata_hash(filename);
+    metadata_path.join(format!("{}.headers", hash))
+}
+
+fn metadata_hash(filename: &str) -> String {
     let hash = sha2_512::default().update(filename.as_bytes()).finalize();
-    let digest = hash.digest();
-    metadata_path.join(format!("{}.headers", digest.to_hex_lowercase()))
+    hash.digest().to_hex_lowercase()
 }
 
 /// Calculate SHA-512 checksum of file data
@@ -221,6 +224,7 @@ fn get_file_from_local(filename: String) -> ReceivedFile {
         cached_filename: String::new(),
         headers: HeaderMap::new(),
         valid: false,
+        hash_id: None,
     };
 
     // Check if file exists
@@ -233,6 +237,7 @@ fn get_file_from_local(filename: String) -> ReceivedFile {
     received_file.cached_filename = file_path.to_string_lossy().to_string();
     received_file.headers = get_headers_from_metadata_file(&filename);
     received_file.valid = true;
+    received_file.hash_id = Some(metadata_hash(&filename));
 
     debug_log!("File found in local storage: {}", file_path.display());
     received_file

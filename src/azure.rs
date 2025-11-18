@@ -53,6 +53,13 @@ fn sanitize_tag_component(input: &str) -> String {
         .collect()
 }
 
+fn extract_cache_hash(content_path: &str) -> Option<String> {
+    content_path
+        .strip_prefix("cache/")
+        .and_then(|rest| rest.strip_suffix(".content"))
+        .map(|s| s.to_string())
+}
+
 /// Get Azure credentials from config.toml
 fn get_azure_credentials(name: &str) -> AzureConfig {
     let cfg_content = get_config_content();
@@ -349,6 +356,7 @@ async fn get_file_from_blob(filename: String) -> ReceivedFile {
         cached_filename: "".to_string(),
         headers: HeaderMap::new(),
         valid: false,
+        hash_id: None,
     };
     received_file.original_filename = filename.clone();
 
@@ -369,6 +377,7 @@ async fn get_file_from_blob(filename: String) -> ReceivedFile {
     let digest = hash.digest();
     let cache_filename = format!("cache/{}.content", digest.to_hex_lowercase());
     let cache_filename_headers = format!("cache/{}.headers", digest.to_hex_lowercase());
+    let mut cache_hash = extract_cache_hash(&cache_filename);
     // check if cache file exists
     if std::path::Path::new(&cache_filename).exists() {
         // check if headers file exists, and if not wait up to 300 seconds
@@ -401,6 +410,7 @@ async fn get_file_from_blob(filename: String) -> ReceivedFile {
             received_file.cached_filename = cache_filename;
             received_file.headers = get_headers_from_file(cache_filename_headers);
             received_file.valid = true;
+            received_file.hash_id = cache_hash.clone();
             return received_file;
         } else {
             // delete cache file and headers
@@ -459,6 +469,7 @@ async fn get_file_from_blob(filename: String) -> ReceivedFile {
             received_file.headers = resp_headers;
             received_file.cached_filename = cache_filename;
             received_file.valid = true;
+            received_file.hash_id = cache_hash;
         }
         Err(e) => {
             eprintln!("Error getting blob: {:?}", e);
@@ -583,6 +594,7 @@ impl super::Driver for AzureDriver {
             cached_filename: "".to_string(),
             headers: HeaderMap::new(),
             valid: false,
+            hash_id: None,
         };
         tokio::task::block_in_place(|| {
             let rt = tokio::runtime::Runtime::new().unwrap();
