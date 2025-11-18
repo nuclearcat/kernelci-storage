@@ -133,6 +133,7 @@ async fn write_file_to_local_streaming(
     let metadata_path = get_metadata_file_path(&filename);
     if let Ok(mut metadata_file) = File::create(&metadata_path) {
         let mut metadata_content = format!("content-type:{}\n", cont_type);
+        metadata_content.push_str(&format!("content-length:{}\n", total_bytes));
         if let Some(email) = owner_email {
             metadata_content.push_str(&format!("tag-owner:{}\n", email));
         }
@@ -174,6 +175,7 @@ fn write_file_to_local(
     let metadata_path = get_metadata_file_path(&filename);
     if let Ok(mut metadata_file) = File::create(&metadata_path) {
         let mut metadata_content = format!("content-type:{}\n", cont_type);
+        metadata_content.push_str(&format!("content-length:{}\n", data.len()));
         if let Some(email) = owner_email {
             metadata_content.push_str(&format!("tag-owner:{}\n", email));
         }

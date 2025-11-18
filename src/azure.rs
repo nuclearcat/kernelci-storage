@@ -12,7 +12,7 @@ impl AzureDriver {
 
 use crate::{debug_log, get_config_content, ReceivedFile};
 use async_trait::async_trait;
-use axum::http::{HeaderName, HeaderValue};
+use axum::http::{header, HeaderName, HeaderValue};
 use azure_storage::StorageCredentials;
 use azure_storage_blobs::container::operations::BlobItem;
 use azure_storage_blobs::prelude::{BlobBlockType, BlockId, BlockList, ClientBuilder, Tags};
@@ -443,14 +443,20 @@ async fn get_file_from_blob(filename: String) -> ReceivedFile {
                 eprintln!("Error getting blob: {:?}", response.status());
                 return received_file;
             }
-            received_file.headers = response.headers().clone();
-            let resp_headers = response.headers().clone();
+            let mut resp_headers = response.headers().clone();
             let body = response.bytes().await.unwrap();
+            let body_len = body.len();
+            if resp_headers.get(header::CONTENT_LENGTH).is_none() {
+                if let Ok(val) = HeaderValue::from_str(&body_len.to_string()) {
+                    resp_headers.insert(header::CONTENT_LENGTH, val);
+                }
+            }
             // just write all to cache file
             let mut f = File::create(&cache_filename).unwrap();
             f.write_all(&body).unwrap();
             // write headers
-            save_headers_to_file(cache_filename_headers, resp_headers);
+            save_headers_to_file(cache_filename_headers, resp_headers.clone());
+            received_file.headers = resp_headers;
             received_file.cached_filename = cache_filename;
             received_file.valid = true;
         }
