@@ -158,9 +158,17 @@ async fn freediskspace_percent(cache_dir: &str) -> u64 {
 }
 
 fn delete_cache_file(file: &str) -> CleanOutcome {
-    // Truncate from filename .content, and add .headers, delete both files
-    let content_filename = file.to_string();
-    let headers_filename = file.replace(".content", ".headers");
+    let (content_filename, headers_filename) = if let Some(base) = file.strip_suffix(".content") {
+        (format!("{}.content", base), format!("{}.headers", base))
+    } else if let Some(base) = file.strip_suffix(".headers") {
+        (format!("{}.content", base), format!("{}.headers", base))
+    } else {
+        debug_log!(
+            "Attempted to delete cache entry without known extension: {}",
+            file
+        );
+        return CleanOutcome::default();
+    };
     debug_log!(
         "Deleting files: {} {}",
         &content_filename,
